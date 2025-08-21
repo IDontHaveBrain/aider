@@ -273,6 +273,60 @@ print(my_function(3, 4))
             # close the open cache files, so Windows won't error
             del repo_map
 
+    def test_no_loi_for_datetime_import_with_lsp_fallback(self):
+        class FakeLSP:
+            def __init__(self):
+                self.base_url = "http://fake"
+
+            def is_supported_file(self, path):
+                return path.endswith(".py")
+
+            def document_symbols(self, uri):
+                import urllib.parse, os
+                p = urllib.parse.urlparse(uri)
+                path = urllib.parse.unquote(p.path)
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        lines = f.read().splitlines()
+                except Exception:
+                    lines = []
+                out = []
+                for i, line in enumerate(lines):
+                    if line.strip().startswith("from datetime import datetime"):
+                        out.append({
+                            "name": "datetime",
+                            "kind": "variable",
+                            "range": {"start": {"line": i, "character": 0}, "end": {"line": i, "character": len(line)}},
+                            "selectionRange": {"start": {"line": i, "character": 5}, "end": {"line": i, "character": 13}},
+                        })
+                return out
+
+            def definition(self, uri, position):
+                return []
+
+            def references(self, uri, position):
+                return []
+
+        with IgnorantTemporaryDirectory() as temp_dir:
+            f1 = os.path.join(temp_dir, "a.py")
+            f2 = os.path.join(temp_dir, "b.py")
+            with open(f1, "w", encoding="utf-8") as f:
+                f.write("from datetime import datetime\n\nprint('ok')\n")
+            with open(f2, "w", encoding="utf-8") as f:
+                f.write("def foo():\n    return 1\n")
+
+            io = InputOutput()
+            repo_map = RepoMap(main_model=self.GPT35, root=temp_dir, io=io)
+            repo_map.lsp = FakeLSP()
+
+            other_files = [f1, f2]
+            result = repo_map.get_repo_map([], other_files)
+            self.assertIn("a.py", result)
+            self.assertIn("b.py", result)
+            self.assertIn("foo", result)
+            self.assertNotIn("from datetime import datetime", result)
+            del repo_map
+
 
 class TestRepoMapTypescript(unittest.TestCase):
     def setUp(self):
